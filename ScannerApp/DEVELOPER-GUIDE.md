@@ -193,5 +193,5 @@ To check if your scanner has 64-bit drivers:
 
 ### Execute With Parameters Example
 ```
-ScannerApp_x64.exe --sourceindex 0 --output "" --feeder true --duplex true --colormode color --resolution high --pagewidth 8500 --pageheight 11000
+ScannerApp_x86.exe --sourceindex 0 --output "" --feeder true --duplex true --colormode color --resolution high --pagewidth 8500 --pageheight 11000
 ```
