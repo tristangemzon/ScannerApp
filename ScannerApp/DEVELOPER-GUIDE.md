@@ -21,6 +21,16 @@ ScannerApp is a Windows desktop application for TWAIN-based document scanning wi
 
 > **Note**: Use **x86 (32-bit)** for maximum compatibility with older scanners that only have 32-bit TWAIN drivers.
 
+### Platform Selection Guide
+
+| Platform | Runtime Behavior | TWAIN Compatibility | Recommended For |
+|----------|-----------------|---------------------|-----------------|
+| **x86** | Always 32-bit | ✓ All 32-bit drivers | Default - most scanners |
+| x64 | Always 64-bit | 64-bit drivers only | Scanners with 64-bit drivers |
+| AnyCPU | 64-bit on 64-bit OS | 64-bit drivers only | Advanced scenarios only |
+
+> **Performance Note**: There is virtually no performance difference between x86, x64, and AnyCPU. The IL code is JIT-compiled to native code at runtime. Choose based on TWAIN driver compatibility, not performance.
+
 ---
 
 ## Building for Deployment
@@ -38,14 +48,24 @@ powershell -ExecutionPolicy Bypass -File .\Build-Deploy.ps1
 # Build x64 (64-bit) - only if scanner has 64-bit drivers
 powershell -ExecutionPolicy Bypass -File .\Build-Deploy.ps1 -Platform x64
 
+# Build AnyCPU - WARNING: runs as 64-bit on 64-bit Windows
+# Use only if you have 64-bit TWAIN drivers or want flexible deployment
+powershell -ExecutionPolicy Bypass -File .\Build-Deploy.ps1 -Platform AnyCPU
+
 # Clean deploy folder first, then build
 powershell -ExecutionPolicy Bypass -File .\Build-Deploy.ps1 -Clean
 powershell -ExecutionPolicy Bypass -File .\Build-Deploy.ps1 -Platform x64 -Clean
+powershell -ExecutionPolicy Bypass -File .\Build-Deploy.ps1 -Platform AnyCPU -Clean
 ```
 
 > **Note**: The `-ExecutionPolicy Bypass` flag is required because the script is not digitally signed.
 
-Output is placed in the `ScannerApp\Deploy\` folder with only essential runtime files.
+Output is placed in platform-specific folders:
+- `ScannerApp\Deploy\x86\` - 32-bit deployment
+- `ScannerApp\Deploy\x64\` - 64-bit deployment
+- `ScannerApp\Deploy\AnyCPU\` - AnyCPU deployment
+
+> **WARNING - AnyCPU and TWAIN Drivers**: AnyCPU builds run as 64-bit on 64-bit Windows by default. Most scanners only have 32-bit TWAIN drivers. A 64-bit process **cannot** load 32-bit TWAIN drivers. Use **x86** unless you are certain your scanner has 64-bit drivers.
 
 ### Option 2: Visual Studio
 
@@ -71,7 +91,7 @@ $msbuild = "${env:ProgramFiles}\Microsoft Visual Studio\2022\Professional\MSBuil
 
 ## Deployment Files
 
-The `Deploy\` folder contains only essential runtime files:
+Each `Deploy\<Platform>\` folder contains only essential runtime files:
 
 | File Type | Included | Notes |
 |-----------|----------|-------|
@@ -115,6 +135,9 @@ ScannerApp/
 └── ScannerApp/
     ├── Build-Deploy.ps1  # Build & deploy script
     ├── Deploy/            # Deployment output (generated)
+    │   ├── x86/          # 32-bit deployment files
+    │   ├── x64/          # 64-bit deployment files
+    │   └── AnyCPU/       # AnyCPU deployment files
     ├── DEVELOPER-GUIDE.md # This guide
     ├── ScannerApp.csproj  # Project file
     ├── Program.cs         # Entry point

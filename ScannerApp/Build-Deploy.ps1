@@ -7,29 +7,38 @@
     This script:
     1. Locates MSBuild from Visual Studio installation
     2. Builds the project in Release configuration for the specified platform
-    3. Copies only essential runtime files (no PDB, XML, or documentation) to Deploy folder
+    3. Copies only essential runtime files (no PDB, XML, or documentation) to Deploy\<Platform> folder
 
 .PARAMETER Platform
-    Target platform: x86 (32-bit) or x64 (64-bit). Default is x86 for maximum scanner compatibility.
+    Target platform: x86 (32-bit), x64 (64-bit), or AnyCPU. Default is x86 for maximum scanner compatibility.
+    
+    WARNING: AnyCPU runs as 64-bit on 64-bit Windows by default. Most scanners only have
+    32-bit TWAIN drivers and will NOT work with a 64-bit process. Use x86 unless you are
+    certain your scanner has 64-bit TWAIN drivers.
 
 .PARAMETER Clean
-    If specified, cleans the Deploy folder before copying new files.
+    If specified, cleans the platform-specific Deploy subfolder before copying new files.
 
 .EXAMPLE
     .\Build-Deploy.ps1
-    Builds x86 (32-bit) and deploys to the Deploy folder.
+    Builds x86 (32-bit) and deploys to Deploy\x86 folder.
 
 .EXAMPLE
     .\Build-Deploy.ps1 -Platform x64
-    Builds x64 (64-bit) and deploys to the Deploy folder.
+    Builds x64 (64-bit) and deploys to Deploy\x64 folder.
+
+.EXAMPLE
+    .\Build-Deploy.ps1 -Platform AnyCPU
+    Builds AnyCPU and deploys to Deploy\AnyCPU folder.
+    WARNING: May not work with 32-bit only TWAIN drivers on 64-bit Windows.
 
 .EXAMPLE
     .\Build-Deploy.ps1 -Platform x86 -Clean
-    Cleans Deploy folder, then builds x86 and deploys.
+    Cleans Deploy\x86 folder, then builds x86 and deploys.
 #>
 
 param(
-    [ValidateSet("x86", "x64")]
+    [ValidateSet("x86", "x64", "AnyCPU")]
     [string]$Platform = "x86",
     [switch]$Clean
 )
@@ -40,8 +49,14 @@ $ErrorActionPreference = "Stop"
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $ProjectDir = $ScriptDir
 $ProjectFile = Join-Path $ProjectDir "ScannerApp.csproj"
-$OutputDir = Join-Path $ProjectDir "bin\$Platform\Release"
-$DeployDir = Join-Path $ProjectDir "Deploy"
+
+# Determine output and deploy paths based on platform
+if ($Platform -eq "AnyCPU") {
+    $OutputDir = Join-Path $ProjectDir "bin\Release"
+} else {
+    $OutputDir = Join-Path $ProjectDir "bin\$Platform\Release"
+}
+$DeployDir = Join-Path $ProjectDir "Deploy\$Platform"
 
 # Find MSBuild
 function Find-MSBuild {
@@ -66,9 +81,21 @@ function Find-MSBuild {
     throw "MSBuild not found. Please install Visual Studio with .NET desktop development workload."
 }
 
-$bitness = if ($Platform -eq "x86") { "32-bit" } else { "64-bit" }
+$bitness = switch ($Platform) {
+    "x86"    { "32-bit" }
+    "x64"    { "64-bit" }
+    "AnyCPU" { "Any CPU" }
+}
 Write-Host "=== ScannerApp Build & Deploy ($bitness) ===" -ForegroundColor Cyan
 Write-Host ""
+
+# Warning for AnyCPU
+if ($Platform -eq "AnyCPU") {
+    Write-Host "WARNING: AnyCPU runs as 64-bit on 64-bit Windows." -ForegroundColor Yellow
+    Write-Host "         Most scanners have 32-bit TWAIN drivers only." -ForegroundColor Yellow
+    Write-Host "         Use x86 platform unless you have 64-bit TWAIN drivers." -ForegroundColor Yellow
+    Write-Host ""
+}
 
 # Step 1: Find MSBuild
 Write-Host "Finding MSBuild..." -ForegroundColor Yellow
