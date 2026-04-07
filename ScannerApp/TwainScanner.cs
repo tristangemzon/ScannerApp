@@ -40,6 +40,9 @@ namespace ScannerApp
             // Check TWAIN platform support; fall back to WIA if not available
             if (!PlatformInfo.Current.IsSupported)
             {
+                msg = "TWAIN platform is not supported. Drivers may be missing or incompatible.";
+                Logger.Log(msg);
+                return msg;
                 //var wia = new WiaScanner();
                 //return wia.ScanToPdf(a_sourceIndex, a_fullPathPdf,
                 //    a_Feeder, a_Duplex,
@@ -79,11 +82,6 @@ namespace ScannerApp
                 int a_PageWidth, int a_PageHeight)
         {
             string msg = string.Empty;
-
-            //Log($"Parameters: a_sourceIndex={a_sourceIndex},\na_fullPathPdf={a_fullPathPdf},\na_Feeder={a_Feeder},\na_Duplex={a_Duplex},\na_color={a_color},\na_resolution={a_resolution},\na_PageWidth={a_PageWidth},\na_PageHeight={a_PageHeight}");
-            //if (a_Feeder) { Log("Feeder is true."); }  else Log("Feeder is FALSE,");
-            //if (a_Duplex) { Log("Duplex is true."); } else Log("Dulex is FALSE.");
-
             var pages = new List<Bitmap>();     // List to accumulate pages as Bitmaps
 
             // debounce timeout: consider scan finished when no new pages arrive for this interval
@@ -143,7 +141,7 @@ namespace ScannerApp
                 }
                 catch (Exception ex)
                 {
-                    //Log($"Error handling transferred image: {ex.Message}");
+                    Logger.Log($"Error handling transferred image: {ex.Message}");
                     // Signal completion on fatal error so main thread won't block forever
                     scanCompleted.Set();
                 }
@@ -307,12 +305,5 @@ namespace ScannerApp
         {
             return "Greetings, Programs!\ncolor:bw,gray,color\nresolution:low,medium,high";
         }
-
-        //private void Log(string message)
-        //{
-        //    Helpers.Log(logFile, message);
-        //}
-
-
     }
 }

@@ -30,14 +30,14 @@ namespace ScannerApp
             Logger.Initialize(outPdf);
 
             // Display parsed values
-            Console.WriteLine($"Source Index: {sourceIndex}");
-            Console.WriteLine($"Output: {outPdf}");
-            Console.WriteLine($"Feeder: {feeder}");
-            Console.WriteLine($"Duplex: {duplex}");
-            Console.WriteLine($"Color Mode: {colorMode}");
-            Console.WriteLine($"Resolution: {resolution}");
-            Console.WriteLine($"Page Width: {pageWidth}");
-            Console.WriteLine($"Page Height: {pageHeight}");
+            //Console.WriteLine($"Source Index: {sourceIndex}");
+            //Console.WriteLine($"Output: {outPdf}");
+            //Console.WriteLine($"Feeder: {feeder}");
+            //Console.WriteLine($"Duplex: {duplex}");
+            //Console.WriteLine($"Color Mode: {colorMode}");
+            //Console.WriteLine($"Resolution: {resolution}");
+            //Console.WriteLine($"Page Width: {pageWidth}");
+            //Console.WriteLine($"Page Height: {pageHeight}");
 
             // Log parsed values
             Logger.Log($"Source Index: {sourceIndex}");

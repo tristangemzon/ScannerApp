@@ -32,7 +32,7 @@ namespace ScannerApp
             }
             catch (Exception ex)
             {
-                //Log($"Warning: couldn't set blank-page discard capability: {ex.Message}");
+                Logger.Log($"Warning: couldn't set blank-page discard capability: {ex.Message}");
             }
 
             if (a_Feeder == true && ds.Capabilities.CapFeederEnabled.CanSet)

@@ -52,14 +52,14 @@ namespace ScannerApp
                             using (XImage img = XImage.FromStream(ms))
                             {
                                 // Calculate the scaling to fit the image into the PDF page.
-                                double xScale = pdfPage.Width / img.Width;
-                                double yScale = pdfPage.Height / img.Height;
+                                double xScale = pdfPage.Width.Point / img.PixelWidth;
+                                double yScale = pdfPage.Height.Point / img.PixelHeight;
 
                                 double scale = Math.Min(xScale, yScale);
 
                                 // Calculate the position to center the image on the PDF page
-                                double x = (pdfPage.Width - img.Width * scale) / 2;
-                                double y = (pdfPage.Height - img.Height * scale) / 2;
+                                double x = (pdfPage.Width.Point - img.PixelWidth * scale) / 2;
+                                double y = (pdfPage.Height.Point - img.PixelHeight * scale) / 2;
 
                                 // Draw the image with the calculated size and position
                                 gfx.DrawImage(img, x, y, img.PixelWidth * scale, img.PixelHeight * scale);

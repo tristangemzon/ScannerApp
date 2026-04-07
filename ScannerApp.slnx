@@ -1,3 +1,5 @@
 <Solution>
-  <Project Path="ScannerApp/ScannerApp.csproj" Id="1f9ee5dd-534a-4061-97e9-65e8d720bdae" />
+  <Project Path="ScannerApp/ScannerApp.csproj" Id="1f9ee5dd-534a-4061-97e9-65e8d720bdae">
+    <Platform Solution="Release|*" Project="x64" />
+  </Project>
 </Solution>
