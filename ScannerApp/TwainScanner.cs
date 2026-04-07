@@ -37,17 +37,12 @@ namespace ScannerApp
         {
             string msg = string.Empty;
 
-            // Check TWAIN platform support; fall back to WIA if not available
+            // Check TWAIN platform support
             if (!PlatformInfo.Current.IsSupported)
             {
                 msg = "TWAIN platform is not supported. Drivers may be missing or incompatible.";
                 Logger.Log(msg);
                 return msg;
-                //var wia = new WiaScanner();
-                //return wia.ScanToPdf(a_sourceIndex, a_fullPathPdf,
-                //    a_Feeder, a_Duplex,
-                //    a_color, a_resolution,
-                //    a_PageWidth, a_PageHeight);
             }
 
             try
