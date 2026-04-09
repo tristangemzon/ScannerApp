@@ -11,6 +11,14 @@ namespace ScannerApp
     {
         static void Main(string[] args)
         {
+            // Check for --list flag first
+            if (HasFlag(args, "--list"))
+            {
+                string listOutput = GetArgValue(args, "--output", "");
+                ListScanners(listOutput);
+                return;
+            }
+
             // Parse command line arguments
             int sourceIndex = GetArgValue(args, "--sourceindex", 0);
             string output = GetArgValue(args, "--output", "");
@@ -55,7 +63,7 @@ namespace ScannerApp
 
             // Output result as JSON
             bool success = string.IsNullOrEmpty(result);
-            string json = $"{{\"success\": {success.ToString().ToLower()}, \"message\": \"{EscapeJson(result)}\", \"output\": \"{EscapeJson(outPdf)}\"}}";
+            string json = $"{{\"success\": {success.ToString().ToLower()}, \"message\": \"{EscapeJson(result)}\", \"output\": \"{EscapeJson(outPdf)}\", \"scannerName\": \"{EscapeJson(scanner.ScannerName)}\", \"scannerModel\": \"{EscapeJson(scanner.ScannerModel)}\"}}";
             Console.WriteLine(json);
             Logger.Log($"Result: {json}");
         }
@@ -88,6 +96,41 @@ namespace ScannerApp
         {
             string value = GetArgValue(args, key, "");
             return bool.TryParse(value, out bool result) ? result : defaultValue;
+        }
+
+        static bool HasFlag(string[] args, string flag)
+        {
+            return args.Any(a => a.Equals(flag, StringComparison.OrdinalIgnoreCase));
+        }
+
+        static void ListScanners(string output = "")
+        {
+            // Initialize logging for list operation
+            string logPath = string.IsNullOrEmpty(output)
+                ? Path.Combine("c:\\temp\\ScannedImages", $"twain_list_{DateTime.Now:yyyyMMddHHmmssfff}.log")
+                : output;
+            Logger.Initialize(logPath);
+            
+            var scanner = new TwainScanner();
+            string scannerList = scanner.GetAvailableScanners();
+            
+            // Parse the scanner list and build JSON array
+            var scanners = new List<string>();
+            var lines = scannerList.Split(new[] { "\r\n", "\n" }, StringSplitOptions.RemoveEmptyEntries);
+            foreach (var line in lines)
+            {
+                var parts = line.Split(new[] { '=' }, 2);
+                if (parts.Length == 2)
+                {
+                    string index = parts[0].Trim();
+                    string name = EscapeJson(parts[1].Trim());
+                    scanners.Add($"{{\"index\": {index}, \"name\": \"{name}\"}}");
+                }
+            }
+            
+            string json = $"{{\"success\": true, \"scanners\": [{string.Join(", ", scanners)}]}}";
+            Console.WriteLine(json);
+            Logger.Log($"Result: {json}");
         }
     }
 }

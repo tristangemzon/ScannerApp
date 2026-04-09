@@ -16,7 +16,22 @@ namespace ScannerApp
     {
         static ManualResetEvent scanCompleted = new ManualResetEvent(false);
         static readonly object transferLock = new object();
-        static System.Timers.Timer transferTimer;      
+        static System.Timers.Timer transferTimer;
+
+        /// <summary>
+        /// Scanner name from the last scan operation.
+        /// </summary>
+        public string ScannerName { get; private set; } = string.Empty;
+
+        /// <summary>
+        /// Scanner manufacturer from the last scan operation.
+        /// </summary>
+        public string ScannerManufacturer { get; private set; } = string.Empty;
+
+        /// <summary>
+        /// Scanner product family/model from the last scan operation.
+        /// </summary>
+        public string ScannerModel { get; private set; } = string.Empty;      
 
         /// <summary>
         /// NTwain-based scanning to PDF.
@@ -185,6 +200,12 @@ namespace ScannerApp
 
                 ds = sources[a_sourceIndex];
                 ds.Open();
+
+                // Capture scanner identification info
+                ScannerName = ds.Name ?? string.Empty;
+                ScannerManufacturer = ds.Manufacturer ?? string.Empty;
+                ScannerModel = ds.ProductFamily ?? string.Empty;
+                Logger.Log($"Scanner: {ScannerName}, Manufacturer: {ScannerManufacturer}, Model: {ScannerModel}");
 
                 if (!ds.IsOpen)
                 {
