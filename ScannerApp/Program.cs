@@ -29,10 +29,10 @@ namespace ScannerApp
             int pageWidth = GetArgValue(args, "--pagewidth", 8500);
             int pageHeight = GetArgValue(args, "--pageheight", 11000);
 
-            // If output is empty, generate default path
+            // If output is empty, generate default path; if no extension, default to .pdf
             string outPdf = string.IsNullOrEmpty(output)
                 ? Path.Combine("c:\\temp\\ScannedImages", $"twain_{DateTime.Now:yyyyMMddHHmmssfff}.pdf")
-                : output;
+                : string.IsNullOrEmpty(Path.GetExtension(output)) ? output + ".pdf" : output;
 
             // Initialize logging with the same path as output PDF but with .log extension
             Logger.Initialize(outPdf);
@@ -61,10 +61,11 @@ namespace ScannerApp
             var scanner = new TwainScanner();
             string result = scanner.ScanToPdf(sourceIndex, outPdf, feeder, duplex, colorMode, resolution, pageWidth, pageHeight);
 
-            // Output result as JSON
+            // Output result as JSON to file
             bool success = string.IsNullOrEmpty(result);
             string json = $"{{\"success\": {success.ToString().ToLower()}, \"message\": \"{EscapeJson(result)}\", \"output\": \"{EscapeJson(outPdf)}\", \"scannerName\": \"{EscapeJson(scanner.ScannerName)}\", \"scannerModel\": \"{EscapeJson(scanner.ScannerModel)}\"}}";
-            Console.WriteLine(json);
+            string jsonPath = Path.ChangeExtension(outPdf, ".json");
+            File.WriteAllText(jsonPath, json);
             Logger.Log($"Result: {json}");
         }
 
