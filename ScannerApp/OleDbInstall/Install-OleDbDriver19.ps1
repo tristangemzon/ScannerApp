@@ -322,13 +322,13 @@ function Get-InstalledOleDbDriver {
         Sort-Object { try { [Version]$_.DisplayVersion } catch { [Version]"0.0" } } -Descending |
         Select-Object -First 1
     
-    $result = @{
-        v19 = @{
+    $result = [PSCustomObject]@{
+        v19 = [PSCustomObject]@{
             Installed = $false
             Version = $null
             DisplayName = $null
         }
-        v18 = @{
+        v18 = [PSCustomObject]@{
             Installed = $false
             Version = $null
             DisplayName = $null
@@ -342,7 +342,7 @@ function Get-InstalledOleDbDriver {
     if ($oleDb19) {
         $v19Version = $null
         try { $v19Version = [Version]$oleDb19.DisplayVersion } catch { }
-        $result.v19 = @{
+        $result.v19 = [PSCustomObject]@{
             Installed = $true
             Version = $v19Version
             DisplayName = $oleDb19.DisplayName
@@ -356,7 +356,7 @@ function Get-InstalledOleDbDriver {
     if ($oleDb18) {
         $v18Version = $null
         try { $v18Version = [Version]$oleDb18.DisplayVersion } catch { }
-        $result.v18 = @{
+        $result.v18 = [PSCustomObject]@{
             Installed = $true
             Version = $v18Version
             DisplayName = $oleDb18.DisplayName
@@ -665,17 +665,20 @@ Write-Host "--- Step 2: Checking Microsoft OLE DB Driver 19 for SQL Server (x64)
 Write-Status "Note: OLE DB Driver 19 requires BOTH x86 and x64 VC++ Redistributables" -Type Info
 $oleDbStatus = Get-InstalledOleDbDriver
 
+# Debug: Show detection results
+Write-Verbose "Detection result - v19.Installed: $($oleDbStatus.v19.Installed), v19.DisplayName: $($oleDbStatus.v19.DisplayName)"
+
 # Show info about version 18 if installed
-if ($oleDbStatus.v18.Installed) {
+if ($oleDbStatus.v18.Installed -eq $true) {
     Write-Status "Found OLE DB Driver 18: $($oleDbStatus.v18.DisplayName) v$($oleDbStatus.v18.Version)" -Type Info
     Write-Status "Version 18 and 19 can coexist side-by-side." -Type Info
 }
 
-if ($oleDbStatus.v19.Installed -and -not $Force) {
+if (($oleDbStatus.v19.Installed -eq $true) -and -not $Force) {
     Write-Status "INSTALLED: $($oleDbStatus.v19.DisplayName)" -Type Success
     Write-Status "Version: $($oleDbStatus.v19.Version)" -Type Info
 } else {
-    if ($Force -and $oleDbStatus.v19.Installed) {
+    if ($Force -and ($oleDbStatus.v19.Installed -eq $true)) {
         Write-Status "Force flag set. Will reinstall OLE DB Driver." -Type Warning
     } else {
         Write-Status "NOT INSTALLED: Microsoft OLE DB Driver 19 for SQL Server" -Type Warning
@@ -719,8 +722,11 @@ Start-Sleep -Seconds 3
 $finalVcStatus = Get-InstalledVCRedist
 $finalOleDbStatus = Get-InstalledOleDbDriver
 
+# Debug output
+Write-Verbose "Final check - v19.Installed: $($finalOleDbStatus.v19.Installed), DisplayName: $($finalOleDbStatus.v19.DisplayName)"
+
 # Debug: If v19 still not detected but we expected installation, show diagnostics
-if (-not $finalOleDbStatus.v19.Installed -and $isAdmin) {
+if ($finalOleDbStatus.v19.Installed -ne $true -and $isAdmin) {
     Write-Status "Detection check after installation..." -Type Info
     Show-OleDbDiagnostics
 }
@@ -729,7 +735,7 @@ Write-Host ""
 Write-Host "Component                                  Status" -ForegroundColor White
 Write-Host "---------                                  ------" -ForegroundColor White
 
-if ($finalVcStatus.x86.Installed) {
+if ($finalVcStatus.x86.Installed -eq $true) {
     Write-Host "Visual C++ Redistributable 2015-2022 (x86) " -NoNewline
     Write-Host "INSTALLED ($($finalVcStatus.x86.Version))" -ForegroundColor Green
 } else {
@@ -737,7 +743,7 @@ if ($finalVcStatus.x86.Installed) {
     Write-Host "NOT INSTALLED" -ForegroundColor Red
 }
 
-if ($finalVcStatus.x64.Installed) {
+if ($finalVcStatus.x64.Installed -eq $true) {
     Write-Host "Visual C++ Redistributable 2015-2022 (x64) " -NoNewline
     Write-Host "INSTALLED ($($finalVcStatus.x64.Version))" -ForegroundColor Green
 } else {
@@ -745,12 +751,12 @@ if ($finalVcStatus.x64.Installed) {
     Write-Host "NOT INSTALLED" -ForegroundColor Red
 }
 
-if ($finalOleDbStatus.v18.Installed) {
+if ($finalOleDbStatus.v18.Installed -eq $true) {
     Write-Host "Microsoft OLE DB Driver 18 for SQL Server  " -NoNewline
     Write-Host "INSTALLED ($($finalOleDbStatus.v18.Version))" -ForegroundColor Cyan
 }
 
-if ($finalOleDbStatus.v19.Installed) {
+if ($finalOleDbStatus.v19.Installed -eq $true) {
     Write-Host "Microsoft OLE DB Driver 19 for SQL Server  " -NoNewline
     Write-Host "INSTALLED ($($finalOleDbStatus.v19.Version))" -ForegroundColor Green
 } else {
@@ -760,7 +766,7 @@ if ($finalOleDbStatus.v19.Installed) {
 
 Write-Host ""
 
-if ($finalVcStatus.BothInstalled -and $finalOleDbStatus.v19.Installed) {
+if (($finalVcStatus.BothInstalled -eq $true) -and ($finalOleDbStatus.v19.Installed -eq $true)) {
     Write-Status "All components are installed and ready." -Type Success
     exit 0
 } else {
