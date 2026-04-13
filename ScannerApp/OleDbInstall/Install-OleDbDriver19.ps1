@@ -34,7 +34,8 @@ param(
     [string]$DownloadPath = $env:TEMP,
     [switch]$Force,
     [switch]$DiagnoseVCRedist,
-    [switch]$DiagnoseOleDb
+    [switch]$DiagnoseOleDb,
+    [switch]$CleanupMsiexec
 )
 
 #Requires -Version 5.1
@@ -255,22 +256,45 @@ function Show-OleDbDiagnostics {
         "HKLM:\Software\Wow6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*"
     )
     
+    # Show ALL entries that might be OLE DB related (broader search)
     $allEntries = Get-ItemProperty $regPaths -ErrorAction SilentlyContinue |
-        Where-Object { $_.DisplayName -like "*OLEDB*" -or $_.DisplayName -like "*OLE DB*" -or $_.DisplayName -like "*MSOLEDBSQL*" } |
+        Where-Object { 
+            $_.DisplayName -and (
+                $_.DisplayName -like "*OLEDB*" -or 
+                $_.DisplayName -like "*OLE DB*" -or 
+                $_.DisplayName -like "*MSOLEDBSQL*" -or
+                $_.DisplayName -like "*SQL Server*Driver*"
+            )
+        } |
         Select-Object DisplayName, DisplayVersion, PSPath |
         Sort-Object DisplayName
     
     if ($allEntries) {
-        Write-Host "Found the following OLE DB entries in registry:" -ForegroundColor Yellow
+        Write-Host "Found the following OLE DB/SQL entries in registry:" -ForegroundColor Yellow
         Write-Host ""
         foreach ($entry in $allEntries) {
-            Write-Host "  Name: $($entry.DisplayName)" -ForegroundColor White
-            Write-Host "  Version: $($entry.DisplayVersion)" -ForegroundColor Gray
+            Write-Host "  Name: [$($entry.DisplayName)]" -ForegroundColor White
+            Write-Host "  Version: [$($entry.DisplayVersion)]" -ForegroundColor Gray
+            # Check if this would match v19 detection
+            $wouldMatchV19 = ($entry.DisplayVersion -and $entry.DisplayVersion -match "^19\.") -or ($entry.DisplayName -like "*19*")
+            if ($wouldMatchV19) {
+                Write-Host "  -> Would be detected as v19: YES" -ForegroundColor Green
+            } else {
+                Write-Host "  -> Would be detected as v19: NO" -ForegroundColor Yellow
+            }
             Write-Host "  Path: $($entry.PSPath -replace 'Microsoft.PowerShell.Core\\Registry::', '')" -ForegroundColor DarkGray
             Write-Host ""
         }
     } else {
         Write-Host "No OLE DB Drivers found in registry!" -ForegroundColor Red
+        Write-Host "Searched patterns: *OLEDB*, *OLE DB*, *MSOLEDBSQL*, *SQL Server*Driver*" -ForegroundColor Gray
+    }
+    
+    # Show msiexec processes
+    $msiProcs = Get-Process -Name msiexec -ErrorAction SilentlyContinue
+    if ($msiProcs) {
+        Write-Host "Active msiexec.exe processes: $($msiProcs.Count)" -ForegroundColor Yellow
+        $msiProcs | ForEach-Object { Write-Host "  PID: $($_.Id), Start: $($_.StartTime)" -ForegroundColor Gray }
     }
     
     Write-Host "=== End OLE DB Diagnostics ===" -ForegroundColor Cyan
@@ -290,6 +314,9 @@ function Get-InstalledOleDbDriver {
         "HKLM:\Software\Wow6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*"
     )
     
+    # Force registry refresh - sometimes cached data causes detection issues
+    [Microsoft.Win32.RegistryKey]::OpenRemoteBaseKey('LocalMachine', $env:COMPUTERNAME) | Out-Null
+    
     $allEntries = Get-ItemProperty $regPaths -ErrorAction SilentlyContinue
     
     # Get ALL OLE DB driver entries first (broad match)
@@ -302,6 +329,8 @@ function Get-InstalledOleDbDriver {
             )
         }
     
+    Write-Verbose "Found $(@($oleDbEntries).Count) OLE DB related entries"
+    
     # Find v19 by checking DisplayVersion starts with 19. OR name contains 19
     $oleDb19 = $oleDbEntries | 
         Where-Object { 
@@ -310,6 +339,16 @@ function Get-InstalledOleDbDriver {
         } |
         Sort-Object { try { [Version]$_.DisplayVersion } catch { [Version]"0.0" } } -Descending |
         Select-Object -First 1
+    
+    if ($oleDb19) {
+        Write-Verbose "Found v19 entry: $($oleDb19.DisplayName), Version: $($oleDb19.DisplayVersion)"
+    } else {
+        Write-Verbose "No v19 entry found matching criteria"
+        # Extra debug: show what entries we have
+        $oleDbEntries | ForEach-Object {
+            Write-Verbose "  Entry: [$($_.DisplayName)] Version: [$($_.DisplayVersion)]"
+        }
+    }
     
     # Find v18 by checking DisplayVersion starts with 18. OR name contains 18 (but not 19)
     $oleDb18 = $oleDbEntries | 
@@ -496,6 +535,7 @@ function Install-OleDbDriver {
         
         $attempt = 0
         $installSuccess = $false
+        $msiTimeout = 300  # 5 minutes timeout for MSI
         
         while (-not $installSuccess -and $attempt -lt $MaxRetries) {
             $attempt++
@@ -510,22 +550,61 @@ function Install-OleDbDriver {
             }
             
             $arguments = "/i `"$installerPath`" /quiet /norestart /log `"$logPath`" IACCEPTMSOLEDBSQLLICENSETERMS=YES"
-            $process = Start-Process -FilePath "msiexec.exe" -ArgumentList $arguments -Wait -PassThru
             
-            if ($process.ExitCode -eq 0 -or $process.ExitCode -eq 3010) {
+            # Start msiexec without -Wait so we can implement our own timeout
+            $process = Start-Process -FilePath "msiexec.exe" -ArgumentList $arguments -PassThru
+            
+            # Wait with timeout
+            $waited = $process | Wait-Process -Timeout $msiTimeout -ErrorAction SilentlyContinue
+            
+            if (-not $process.HasExited) {
+                Write-Status "MSI installer is taking too long (over $msiTimeout seconds). It may be hung." -Type Warning
+                Write-Status "Attempting to terminate hung msiexec process..." -Type Warning
+                
+                try {
+                    $process | Stop-Process -Force -ErrorAction SilentlyContinue
+                    Start-Sleep -Seconds 2
+                    
+                    # Also kill any orphaned msiexec processes
+                    Get-Process -Name msiexec -ErrorAction SilentlyContinue | 
+                        Where-Object { $_.StartTime -lt (Get-Date).AddMinutes(-3) } |
+                        Stop-Process -Force -ErrorAction SilentlyContinue
+                    
+                    Write-Status "Process terminated. Checking if installation completed anyway..." -Type Info
+                    Start-Sleep -Seconds 3
+                    
+                    # Check if it actually installed despite the hang
+                    $recheckStatus = Get-InstalledOleDbDriver
+                    if ($recheckStatus.v19.Installed -eq $true) {
+                        Write-Status "OLE DB Driver 19 was installed successfully despite process hang." -Type Success
+                        $installSuccess = $true
+                        continue
+                    }
+                } catch {
+                    Write-Status "Could not terminate process: $($_.Exception.Message)" -Type Error
+                }
+                
+                # Treat as failure for this attempt, will retry
+                $installSuccess = $false
+                continue
+            }
+            
+            $exitCode = $process.ExitCode
+            
+            if ($exitCode -eq 0 -or $exitCode -eq 3010) {
                 Write-Status "OLE DB Driver 19 installed successfully." -Type Success
-                if ($process.ExitCode -eq 3010) {
+                if ($exitCode -eq 3010) {
                     Write-Status "A system restart may be required." -Type Warning
                 }
                 $installSuccess = $true
-            } elseif ($process.ExitCode -eq 1618) {
+            } elseif ($exitCode -eq 1618) {
                 # 1618 = Another installation in progress
                 Write-Status "Another installation is in progress (exit code: 1618)." -Type Warning
                 if ($attempt -lt $MaxRetries) {
                     Write-Status "Will retry after waiting..." -Type Info
                 }
                 $installSuccess = $false
-            } elseif ($process.ExitCode -eq 1603) {
+            } elseif ($exitCode -eq 1603) {
                 # 1603 = Fatal error during installation (often reconfiguration issue or already installed)
                 Write-Status "Installation failed with exit code 1603 (fatal error/reconfiguration)." -Type Error
                 Write-Status "This often occurs when the driver is already installed or a repair fails." -Type Warning
@@ -534,7 +613,7 @@ function Install-OleDbDriver {
                 # Check if it's actually already installed
                 Start-Sleep -Seconds 2
                 $recheckStatus = Get-InstalledOleDbDriver
-                if ($recheckStatus.v19.Installed) {
+                if ($recheckStatus.v19.Installed -eq $true) {
                     Write-Status "OLE DB Driver 19 is already installed: $($recheckStatus.v19.DisplayName) v$($recheckStatus.v19.Version)" -Type Success
                     $installSuccess = $true
                 } else {
@@ -542,7 +621,7 @@ function Install-OleDbDriver {
                     break
                 }
             } else {
-                Write-Status "Installation failed with exit code: $($process.ExitCode)" -Type Error
+                Write-Status "Installation failed with exit code: $exitCode" -Type Error
                 Write-Status "Check log file: $logPath" -Type Info
                 # Don't retry for other failures
                 break
@@ -586,6 +665,29 @@ if ($DiagnoseVCRedist) {
 }
 if ($DiagnoseOleDb) {
     Show-OleDbDiagnostics
+}
+
+# Cleanup hung msiexec processes if requested
+if ($CleanupMsiexec) {
+    Write-Status "Checking for hung msiexec processes..." -Type Info
+    $msiProcs = Get-Process -Name msiexec -ErrorAction SilentlyContinue
+    if ($msiProcs -and $msiProcs.Count -gt 0) {
+        Write-Status "Found $($msiProcs.Count) msiexec process(es). Attempting to terminate..." -Type Warning
+        foreach ($proc in $msiProcs) {
+            try {
+                Write-Host "  Terminating PID $($proc.Id) (started: $($proc.StartTime))..." -ForegroundColor Yellow
+                $proc | Stop-Process -Force -ErrorAction Stop
+                Write-Host "  Terminated." -ForegroundColor Green
+            } catch {
+                Write-Host "  Failed to terminate: $($_.Exception.Message)" -ForegroundColor Red
+            }
+        }
+        Start-Sleep -Seconds 3
+        Write-Status "Cleanup complete." -Type Success
+    } else {
+        Write-Status "No msiexec processes found." -Type Info
+    }
+    Write-Host ""
 }
 
 $needsInstall = $false
