@@ -40,6 +40,9 @@ param(
 
 #Requires -Version 5.1
 
+# Log file path (same name as script with .log extension)
+$script:LogFile = $PSCommandPath -replace '\.ps1$', '.log'
+
 # URLs for downloads (permalinks for latest supported versions)
 $VCRedistX64Url = "https://aka.ms/vc14/vc_redist.x64.exe"  # Latest VC++ v14 (14.50.35719.0+)
 $VCRedistX86Url = "https://aka.ms/vc14/vc_redist.x86.exe"  # Latest VC++ v14 (14.50.35719.0+)
@@ -105,7 +108,11 @@ function Write-Status {
         "Error"   = "[-]"
     }
     
-    Write-Host "$($prefix[$Type]) $Message" -ForegroundColor $colors[$Type]
+    $line = "$($prefix[$Type]) $Message"
+    Write-Host $line -ForegroundColor $colors[$Type]
+    
+    # Append to log file with timestamp
+    "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') $line" | Add-Content -Path $script:LogFile
 }
 
 function Test-Administrator {
@@ -884,13 +891,18 @@ Write-Verbose "Detection result - v19.Installed: $($oleDbStatus.v19.Installed), 
 
 # Show info about version 18 if installed
 if ($oleDbStatus.v18.Installed -eq $true) {
-    Write-Status "Found OLE DB Driver 18: $($oleDbStatus.v18.DisplayName) v$($oleDbStatus.v18.Version)" -Type Info
+    $v18Info = if ($oleDbStatus.v18.Version) { "v$($oleDbStatus.v18.Version)" } else { "(COM Registered)" }
+    Write-Status "Found OLE DB Driver 18: $($oleDbStatus.v18.DisplayName) $v18Info" -Type Info
     Write-Status "Version 18 and 19 can coexist side-by-side." -Type Info
 }
 
 if (($oleDbStatus.v19.Installed -eq $true) -and -not $Force) {
     Write-Status "INSTALLED: $($oleDbStatus.v19.DisplayName)" -Type Success
-    Write-Status "Version: $($oleDbStatus.v19.Version)" -Type Info
+    if ($oleDbStatus.v19.Version) {
+        Write-Status "Version: $($oleDbStatus.v19.Version)" -Type Info
+    } elseif ($oleDbStatus.v19.ComRegistered -eq $true) {
+        Write-Status "Status: COM Provider Registered" -Type Info
+    }
 } else {
     if ($Force -and ($oleDbStatus.v19.Installed -eq $true)) {
         Write-Status "Force flag set. Will reinstall OLE DB Driver." -Type Warning
@@ -967,12 +979,14 @@ if ($finalVcStatus.x64.Installed -eq $true) {
 
 if ($finalOleDbStatus.v18.Installed -eq $true) {
     Write-Host "Microsoft OLE DB Driver 18 for SQL Server  " -NoNewline
-    Write-Host "INSTALLED ($($finalOleDbStatus.v18.Version))" -ForegroundColor Cyan
+    $v18VersionText = if ($finalOleDbStatus.v18.Version) { $finalOleDbStatus.v18.Version.ToString() } else { "COM Registered" }
+    Write-Host "INSTALLED ($v18VersionText)" -ForegroundColor Cyan
 }
 
 if ($finalOleDbStatus.v19.Installed -eq $true) {
     Write-Host "Microsoft OLE DB Driver 19 for SQL Server  " -NoNewline
-    Write-Host "INSTALLED ($($finalOleDbStatus.v19.Version))" -ForegroundColor Green
+    $v19VersionText = if ($finalOleDbStatus.v19.Version) { $finalOleDbStatus.v19.Version.ToString() } else { "COM Registered" }
+    Write-Host "INSTALLED ($v19VersionText)" -ForegroundColor Green
 } else {
     Write-Host "Microsoft OLE DB Driver 19 for SQL Server  " -NoNewline
     Write-Host "NOT INSTALLED" -ForegroundColor Red
