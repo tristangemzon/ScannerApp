@@ -246,11 +246,78 @@ function Get-InstalledVCRedist {
 function Show-OleDbDiagnostics {
     <#
     .SYNOPSIS
-        Shows all OLE DB drivers found in the registry for troubleshooting
+        Shows all OLE DB drivers found in the registry and via OLE DB Enumerator for troubleshooting
     #>
     Write-Host ""
     Write-Host "=== OLE DB Driver Diagnostics ===" -ForegroundColor Cyan
     
+    # Method 1: Check via OLE DB Enumerator (most reliable)
+    Write-Host ""
+    Write-Host "--- OLE DB Enumerator (COM Registration) ---" -ForegroundColor Yellow
+    try {
+        $oleDbEnum = New-Object -ComObject "MSDAENUM"
+        $rs = $oleDbEnum.GetType().InvokeMember("GetSourcesRowset", [System.Reflection.BindingFlags]::InvokeMethod, $null, $oleDbEnum, $null)
+        
+        $providers = @()
+        while (-not $rs.EOF) {
+            $name = $rs.Fields.Item("SOURCES_NAME").Value
+            $desc = $rs.Fields.Item("SOURCES_DESCRIPTION").Value
+            if ($name -like "*OLEDB*" -or $name -like "*MSOLEDBSQL*" -or $desc -like "*SQL Server*") {
+                $providers += [PSCustomObject]@{
+                    Name = $name
+                    Description = $desc
+                }
+            }
+            $rs.MoveNext()
+        }
+        $rs.Close()
+        [System.Runtime.InteropServices.Marshal]::ReleaseComObject($rs) | Out-Null
+        [System.Runtime.InteropServices.Marshal]::ReleaseComObject($oleDbEnum) | Out-Null
+        
+        if ($providers.Count -gt 0) {
+            Write-Host "Found registered OLE DB providers:" -ForegroundColor Green
+            foreach ($p in $providers) {
+                Write-Host "  Provider: $($p.Name)" -ForegroundColor White
+                Write-Host "  Description: $($p.Description)" -ForegroundColor Gray
+                if ($p.Name -eq "MSOLEDBSQL19") {
+                    Write-Host "  -> MSOLEDBSQL19 is REGISTERED and available!" -ForegroundColor Green
+                }
+                Write-Host ""
+            }
+        } else {
+            Write-Host "No SQL Server OLE DB providers found via enumerator." -ForegroundColor Yellow
+        }
+    } catch {
+        Write-Host "Could not query OLE DB Enumerator: $($_.Exception.Message)" -ForegroundColor Yellow
+        Write-Host "Falling back to direct COM check..." -ForegroundColor Gray
+    }
+    
+    # Method 2: Direct COM class check for MSOLEDBSQL19
+    Write-Host "--- Direct Provider Check ---" -ForegroundColor Yellow
+    $providerChecks = @(
+        @{ Name = "MSOLEDBSQL19"; Desc = "OLE DB Driver 19 for SQL Server" },
+        @{ Name = "MSOLEDBSQL"; Desc = "OLE DB Driver 18 for SQL Server" },
+        @{ Name = "SQLOLEDB"; Desc = "SQL Server OLE DB Provider (legacy)" },
+        @{ Name = "SQLNCLI11"; Desc = "SQL Server Native Client 11.0" }
+    )
+    
+    foreach ($check in $providerChecks) {
+        try {
+            # Check if the provider's ProgID is registered
+            $clsidPath = "Registry::HKEY_CLASSES_ROOT\$($check.Name)\CLSID"
+            if (Test-Path $clsidPath) {
+                $clsid = (Get-ItemProperty $clsidPath)."(default)"
+                Write-Host "  $($check.Name): REGISTERED (CLSID: $clsid)" -ForegroundColor Green
+            } else {
+                Write-Host "  $($check.Name): NOT REGISTERED" -ForegroundColor Yellow
+            }
+        } catch {
+            Write-Host "  $($check.Name): Check failed - $($_.Exception.Message)" -ForegroundColor Red
+        }
+    }
+    
+    Write-Host ""
+    Write-Host "--- Registry Uninstall Entries ---" -ForegroundColor Yellow
     $regPaths = @(
         "HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*",
         "HKLM:\Software\Wow6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*"
@@ -270,24 +337,18 @@ function Show-OleDbDiagnostics {
         Sort-Object DisplayName
     
     if ($allEntries) {
-        Write-Host "Found the following OLE DB/SQL entries in registry:" -ForegroundColor Yellow
-        Write-Host ""
+        Write-Host "Found in registry Uninstall keys:" -ForegroundColor Gray
         foreach ($entry in $allEntries) {
             Write-Host "  Name: [$($entry.DisplayName)]" -ForegroundColor White
             Write-Host "  Version: [$($entry.DisplayVersion)]" -ForegroundColor Gray
-            # Check if this would match v19 detection
             $wouldMatchV19 = ($entry.DisplayVersion -and $entry.DisplayVersion -match "^19\.") -or ($entry.DisplayName -like "*19*")
             if ($wouldMatchV19) {
                 Write-Host "  -> Would be detected as v19: YES" -ForegroundColor Green
-            } else {
-                Write-Host "  -> Would be detected as v19: NO" -ForegroundColor Yellow
             }
-            Write-Host "  Path: $($entry.PSPath -replace 'Microsoft.PowerShell.Core\\Registry::', '')" -ForegroundColor DarkGray
             Write-Host ""
         }
     } else {
-        Write-Host "No OLE DB Drivers found in registry!" -ForegroundColor Red
-        Write-Host "Searched patterns: *OLEDB*, *OLE DB*, *MSOLEDBSQL*, *SQL Server*Driver*" -ForegroundColor Gray
+        Write-Host "No OLE DB entries found in Uninstall registry!" -ForegroundColor Yellow
     }
     
     # Show msiexec processes
@@ -301,21 +362,80 @@ function Show-OleDbDiagnostics {
     Write-Host ""
 }
 
+function Test-OleDbProviderRegistered {
+    <#
+    .SYNOPSIS
+        Checks if an OLE DB provider is registered in COM
+    .PARAMETER ProviderName
+        The provider name (e.g., MSOLEDBSQL19)
+    .RETURNS
+        $true if registered, $false otherwise
+    #>
+    param(
+        [string]$ProviderName = "MSOLEDBSQL19"
+    )
+    
+    try {
+        $clsidPath = "Registry::HKEY_CLASSES_ROOT\$ProviderName\CLSID"
+        if (Test-Path $clsidPath) {
+            $clsid = (Get-ItemProperty $clsidPath -ErrorAction Stop)."(default)"
+            if ($clsid) {
+                Write-Verbose "Provider $ProviderName is registered with CLSID: $clsid"
+                return $true
+            }
+        }
+    } catch {
+        Write-Verbose "Error checking provider $ProviderName : $($_.Exception.Message)"
+    }
+    
+    return $false
+}
+
 function Get-InstalledOleDbDriver {
     <#
     .SYNOPSIS
         Checks if Microsoft OLE DB Driver 18 and/or 19 for SQL Server are installed
     .DESCRIPTION
-        Returns information about both OLE DB Driver 18 and 19 installations
+        Uses multiple detection methods:
+        1. COM registration check (HKCR\MSOLEDBSQL19\CLSID) - most reliable
+        2. Registry Uninstall keys - for version information
     #>
     
+    $result = [PSCustomObject]@{
+        v19 = [PSCustomObject]@{
+            Installed = $false
+            Version = $null
+            DisplayName = $null
+            ComRegistered = $false
+        }
+        v18 = [PSCustomObject]@{
+            Installed = $false
+            Version = $null
+            DisplayName = $null
+            ComRegistered = $false
+        }
+        # For backward compatibility
+        Installed = $false
+        Version = $null
+        DisplayName = $null
+    }
+    
+    # Method 1: Check COM registration (most reliable - checks if provider is actually usable)
+    $v19ComRegistered = Test-OleDbProviderRegistered -ProviderName "MSOLEDBSQL19"
+    $v18ComRegistered = Test-OleDbProviderRegistered -ProviderName "MSOLEDBSQL"
+    
+    Write-Verbose "COM Registration check - MSOLEDBSQL19: $v19ComRegistered, MSOLEDBSQL: $v18ComRegistered"
+    
+    # Method 2: Check registry for version information
     $regPaths = @(
         "HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*",
         "HKLM:\Software\Wow6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*"
     )
     
-    # Force registry refresh - sometimes cached data causes detection issues
-    [Microsoft.Win32.RegistryKey]::OpenRemoteBaseKey('LocalMachine', $env:COMPUTERNAME) | Out-Null
+    # Force registry refresh
+    try {
+        [Microsoft.Win32.RegistryKey]::OpenRemoteBaseKey('LocalMachine', $env:COMPUTERNAME) | Out-Null
+    } catch { }
     
     $allEntries = Get-ItemProperty $regPaths -ErrorAction SilentlyContinue
     
@@ -329,10 +449,10 @@ function Get-InstalledOleDbDriver {
             )
         }
     
-    Write-Verbose "Found $(@($oleDbEntries).Count) OLE DB related entries"
+    Write-Verbose "Found $(@($oleDbEntries).Count) OLE DB related registry entries"
     
-    # Find v19 by checking DisplayVersion starts with 19. OR name contains 19
-    $oleDb19 = $oleDbEntries | 
+    # Find v19 info from registry
+    $oleDb19Reg = $oleDbEntries | 
         Where-Object { 
             ($_.DisplayVersion -and $_.DisplayVersion -match "^19\.") -or
             ($_.DisplayName -like "*19*")
@@ -340,18 +460,8 @@ function Get-InstalledOleDbDriver {
         Sort-Object { try { [Version]$_.DisplayVersion } catch { [Version]"0.0" } } -Descending |
         Select-Object -First 1
     
-    if ($oleDb19) {
-        Write-Verbose "Found v19 entry: $($oleDb19.DisplayName), Version: $($oleDb19.DisplayVersion)"
-    } else {
-        Write-Verbose "No v19 entry found matching criteria"
-        # Extra debug: show what entries we have
-        $oleDbEntries | ForEach-Object {
-            Write-Verbose "  Entry: [$($_.DisplayName)] Version: [$($_.DisplayVersion)]"
-        }
-    }
-    
-    # Find v18 by checking DisplayVersion starts with 18. OR name contains 18 (but not 19)
-    $oleDb18 = $oleDbEntries | 
+    # Find v18 info from registry
+    $oleDb18Reg = $oleDbEntries | 
         Where-Object { 
             (($_.DisplayVersion -and $_.DisplayVersion -match "^18\.") -or
              ($_.DisplayName -like "*18*")) -and
@@ -361,45 +471,47 @@ function Get-InstalledOleDbDriver {
         Sort-Object { try { [Version]$_.DisplayVersion } catch { [Version]"0.0" } } -Descending |
         Select-Object -First 1
     
-    $result = [PSCustomObject]@{
-        v19 = [PSCustomObject]@{
-            Installed = $false
-            Version = $null
-            DisplayName = $null
-        }
-        v18 = [PSCustomObject]@{
-            Installed = $false
-            Version = $null
-            DisplayName = $null
-        }
-        # For backward compatibility
-        Installed = $false
-        Version = $null
-        DisplayName = $null
-    }
-    
-    if ($oleDb19) {
+    # Combine COM check with registry info for v19
+    if ($v19ComRegistered -or $oleDb19Reg) {
         $v19Version = $null
-        try { $v19Version = [Version]$oleDb19.DisplayVersion } catch { }
+        $v19Name = "Microsoft OLE DB Driver 19 for SQL Server"
+        
+        if ($oleDb19Reg) {
+            try { $v19Version = [Version]$oleDb19Reg.DisplayVersion } catch { }
+            $v19Name = $oleDb19Reg.DisplayName
+        }
+        
         $result.v19 = [PSCustomObject]@{
             Installed = $true
             Version = $v19Version
-            DisplayName = $oleDb19.DisplayName
+            DisplayName = $v19Name
+            ComRegistered = $v19ComRegistered
         }
-        # Set legacy properties for backward compatibility
         $result.Installed = $true
         $result.Version = $v19Version
-        $result.DisplayName = $oleDb19.DisplayName
+        $result.DisplayName = $v19Name
+        
+        Write-Verbose "v19 detected - COM: $v19ComRegistered, Registry: $($null -ne $oleDb19Reg), Version: $v19Version"
     }
     
-    if ($oleDb18) {
+    # Combine COM check with registry info for v18
+    if ($v18ComRegistered -or $oleDb18Reg) {
         $v18Version = $null
-        try { $v18Version = [Version]$oleDb18.DisplayVersion } catch { }
+        $v18Name = "Microsoft OLE DB Driver 18 for SQL Server"
+        
+        if ($oleDb18Reg) {
+            try { $v18Version = [Version]$oleDb18Reg.DisplayVersion } catch { }
+            $v18Name = $oleDb18Reg.DisplayName
+        }
+        
         $result.v18 = [PSCustomObject]@{
             Installed = $true
             Version = $v18Version
-            DisplayName = $oleDb18.DisplayName
+            DisplayName = $v18Name
+            ComRegistered = $v18ComRegistered
         }
+        
+        Write-Verbose "v18 detected - COM: $v18ComRegistered, Registry: $($null -ne $oleDb18Reg), Version: $v18Version"
     }
     
     return $result
