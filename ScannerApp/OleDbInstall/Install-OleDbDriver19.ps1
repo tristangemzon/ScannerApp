@@ -292,30 +292,32 @@ function Get-InstalledOleDbDriver {
     
     $allEntries = Get-ItemProperty $regPaths -ErrorAction SilentlyContinue
     
-    # Check for OLE DB Driver 19 - expanded patterns including version-based detection
-    $oleDb19 = $allEntries | 
+    # Get ALL OLE DB driver entries first (broad match)
+    $oleDbEntries = $allEntries | 
         Where-Object { 
-            ($_.DisplayName -like "*OLE DB Driver 19*") -or
-            ($_.DisplayName -like "*MSOLEDBSQL19*") -or
-            ($_.DisplayName -match "MSOLEDBSQL.*19") -or
-            ($_.DisplayName -like "Microsoft OLE DB Driver 19*") -or
-            # Also match generic name with version 19.x in DisplayVersion
-            (($_.DisplayName -like "*OLE DB Driver*SQL Server*" -or $_.DisplayName -like "*MSOLEDBSQL*") -and 
-             $_.DisplayVersion -and $_.DisplayVersion -match "^19\.")
+            $_.DisplayName -and (
+                $_.DisplayName -like "*MSOLEDBSQL*" -or
+                $_.DisplayName -like "*OLE DB*Driver*" -or
+                $_.DisplayName -like "*OLE DB Driver*"
+            )
+        }
+    
+    # Find v19 by checking DisplayVersion starts with 19. OR name contains 19
+    $oleDb19 = $oleDbEntries | 
+        Where-Object { 
+            ($_.DisplayVersion -and $_.DisplayVersion -match "^19\.") -or
+            ($_.DisplayName -like "*19*")
         } |
         Sort-Object { try { [Version]$_.DisplayVersion } catch { [Version]"0.0" } } -Descending |
         Select-Object -First 1
     
-    # Check for OLE DB Driver 18 - to detect potential conflicts
-    $oleDb18 = $allEntries | 
+    # Find v18 by checking DisplayVersion starts with 18. OR name contains 18 (but not 19)
+    $oleDb18 = $oleDbEntries | 
         Where-Object { 
-            ($_.DisplayName -like "*OLE DB Driver 18*") -or
-            ($_.DisplayName -like "*MSOLEDBSQL*" -and $_.DisplayName -notlike "*19*" -and $_.DisplayVersion -like "18.*") -or
-            ($_.DisplayName -match "MSOLEDBSQL[^1]*18") -or
-            ($_.DisplayName -like "Microsoft OLE DB Driver 18*") -or
-            # Also match generic name with version 18.x in DisplayVersion
-            (($_.DisplayName -like "*OLE DB Driver*SQL Server*" -or $_.DisplayName -like "*MSOLEDBSQL*") -and 
-             $_.DisplayName -notlike "*19*" -and $_.DisplayVersion -and $_.DisplayVersion -match "^18\.")
+            (($_.DisplayVersion -and $_.DisplayVersion -match "^18\.") -or
+             ($_.DisplayName -like "*18*")) -and
+            ($_.DisplayName -notlike "*19*") -and
+            (-not $_.DisplayVersion -or $_.DisplayVersion -notmatch "^19\.")
         } |
         Sort-Object { try { [Version]$_.DisplayVersion } catch { [Version]"0.0" } } -Descending |
         Select-Object -First 1
@@ -338,21 +340,25 @@ function Get-InstalledOleDbDriver {
     }
     
     if ($oleDb19) {
+        $v19Version = $null
+        try { $v19Version = [Version]$oleDb19.DisplayVersion } catch { }
         $result.v19 = @{
             Installed = $true
-            Version = [Version]$oleDb19.DisplayVersion
+            Version = $v19Version
             DisplayName = $oleDb19.DisplayName
         }
         # Set legacy properties for backward compatibility
         $result.Installed = $true
-        $result.Version = [Version]$oleDb19.DisplayVersion
+        $result.Version = $v19Version
         $result.DisplayName = $oleDb19.DisplayName
     }
     
     if ($oleDb18) {
+        $v18Version = $null
+        try { $v18Version = [Version]$oleDb18.DisplayVersion } catch { }
         $result.v18 = @{
             Installed = $true
-            Version = [Version]$oleDb18.DisplayVersion
+            Version = $v18Version
             DisplayName = $oleDb18.DisplayName
         }
     }
