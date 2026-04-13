@@ -40,10 +40,10 @@ param(
 # URLs for downloads
 $VCRedistX64Url = "https://aka.ms/vs/17/release/vc_redist.x64.exe"
 $VCRedistX86Url = "https://aka.ms/vs/17/release/vc_redist.x86.exe"
-$OleDbUrl = "https://go.microsoft.com/fwlink/?linkid=2248728"
+$OleDbUrl = "https://go.microsoft.com/fwlink/?linkid=2318101"  # MSOLEDBSQL19 v19.4.1 (x64/Arm64)
 
 # Minimum required versions
-$MinVCRedistVersion = [Version]"14.29.0.0"  # VS 2015-2022 baseline
+$MinVCRedistVersion = [Version]"14.34.0.0"  # VS 2022 minimum required for MSOLEDBSQL19 (per 19.3.0 release notes)
 $MinOleDbVersion = [Version]"19.0.0.0"
 
 function Write-Status {
