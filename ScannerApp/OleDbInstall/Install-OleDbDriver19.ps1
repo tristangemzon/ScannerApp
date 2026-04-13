@@ -33,7 +33,8 @@
 param(
     [string]$DownloadPath = $env:TEMP,
     [switch]$Force,
-    [switch]$DiagnoseVCRedist
+    [switch]$DiagnoseVCRedist,
+    [switch]$DiagnoseOleDb
 )
 
 #Requires -Version 5.1
@@ -241,10 +242,47 @@ function Get-InstalledVCRedist {
     return $result
 }
 
+function Show-OleDbDiagnostics {
+    <#
+    .SYNOPSIS
+        Shows all OLE DB drivers found in the registry for troubleshooting
+    #>
+    Write-Host ""
+    Write-Host "=== OLE DB Driver Diagnostics ===" -ForegroundColor Cyan
+    
+    $regPaths = @(
+        "HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*",
+        "HKLM:\Software\Wow6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*"
+    )
+    
+    $allEntries = Get-ItemProperty $regPaths -ErrorAction SilentlyContinue |
+        Where-Object { $_.DisplayName -like "*OLEDB*" -or $_.DisplayName -like "*OLE DB*" -or $_.DisplayName -like "*MSOLEDBSQL*" } |
+        Select-Object DisplayName, DisplayVersion, PSPath |
+        Sort-Object DisplayName
+    
+    if ($allEntries) {
+        Write-Host "Found the following OLE DB entries in registry:" -ForegroundColor Yellow
+        Write-Host ""
+        foreach ($entry in $allEntries) {
+            Write-Host "  Name: $($entry.DisplayName)" -ForegroundColor White
+            Write-Host "  Version: $($entry.DisplayVersion)" -ForegroundColor Gray
+            Write-Host "  Path: $($entry.PSPath -replace 'Microsoft.PowerShell.Core\\Registry::', '')" -ForegroundColor DarkGray
+            Write-Host ""
+        }
+    } else {
+        Write-Host "No OLE DB Drivers found in registry!" -ForegroundColor Red
+    }
+    
+    Write-Host "=== End OLE DB Diagnostics ===" -ForegroundColor Cyan
+    Write-Host ""
+}
+
 function Get-InstalledOleDbDriver {
     <#
     .SYNOPSIS
-        Checks if Microsoft OLE DB Driver 19 for SQL Server (x64) is installed
+        Checks if Microsoft OLE DB Driver 18 and/or 19 for SQL Server are installed
+    .DESCRIPTION
+        Returns information about both OLE DB Driver 18 and 19 installations
     #>
     
     $regPaths = @(
@@ -252,22 +290,68 @@ function Get-InstalledOleDbDriver {
         "HKLM:\Software\Wow6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*"
     )
     
-    $oleDb = Get-ItemProperty $regPaths -ErrorAction SilentlyContinue | 
+    $allEntries = Get-ItemProperty $regPaths -ErrorAction SilentlyContinue
+    
+    # Check for OLE DB Driver 19 - expanded patterns
+    $oleDb19 = $allEntries | 
         Where-Object { 
-            $_.DisplayName -like "*OLE DB Driver 19*SQL Server*" -or
-            $_.DisplayName -like "*MSOLEDBSQL19*"
+            ($_.DisplayName -like "*OLE DB Driver 19*") -or
+            ($_.DisplayName -like "*MSOLEDBSQL19*") -or
+            ($_.DisplayName -match "MSOLEDBSQL.*19") -or
+            ($_.DisplayName -like "Microsoft OLE DB Driver 19*")
         } |
+        Sort-Object { [Version]$_.DisplayVersion } -Descending |
         Select-Object -First 1
     
-    if ($oleDb) {
-        return @{
+    # Check for OLE DB Driver 18 - to detect potential conflicts
+    $oleDb18 = $allEntries | 
+        Where-Object { 
+            ($_.DisplayName -like "*OLE DB Driver 18*") -or
+            ($_.DisplayName -like "*MSOLEDBSQL*" -and $_.DisplayName -notlike "*19*" -and $_.DisplayVersion -like "18.*") -or
+            ($_.DisplayName -match "MSOLEDBSQL[^1]*18") -or
+            ($_.DisplayName -like "Microsoft OLE DB Driver 18*")
+        } |
+        Sort-Object { [Version]$_.DisplayVersion } -Descending |
+        Select-Object -First 1
+    
+    $result = @{
+        v19 = @{
+            Installed = $false
+            Version = $null
+            DisplayName = $null
+        }
+        v18 = @{
+            Installed = $false
+            Version = $null
+            DisplayName = $null
+        }
+        # For backward compatibility
+        Installed = $false
+        Version = $null
+        DisplayName = $null
+    }
+    
+    if ($oleDb19) {
+        $result.v19 = @{
             Installed = $true
-            Version = [Version]$oleDb.DisplayVersion
-            DisplayName = $oleDb.DisplayName
+            Version = [Version]$oleDb19.DisplayVersion
+            DisplayName = $oleDb19.DisplayName
+        }
+        # Set legacy properties for backward compatibility
+        $result.Installed = $true
+        $result.Version = [Version]$oleDb19.DisplayVersion
+        $result.DisplayName = $oleDb19.DisplayName
+    }
+    
+    if ($oleDb18) {
+        $result.v18 = @{
+            Installed = $true
+            Version = [Version]$oleDb18.DisplayVersion
+            DisplayName = $oleDb18.DisplayName
         }
     }
     
-    return @{ Installed = $false; Version = $null; DisplayName = $null }
+    return $result
 }
 
 function Install-VCRedist {
@@ -429,6 +513,22 @@ function Install-OleDbDriver {
                     Write-Status "Will retry after waiting..." -Type Info
                 }
                 $installSuccess = $false
+            } elseif ($process.ExitCode -eq 1603) {
+                # 1603 = Fatal error during installation (often reconfiguration issue or already installed)
+                Write-Status "Installation failed with exit code 1603 (fatal error/reconfiguration)." -Type Error
+                Write-Status "This often occurs when the driver is already installed or a repair fails." -Type Warning
+                Write-Status "Check log file: $logPath" -Type Info
+                
+                # Check if it's actually already installed
+                Start-Sleep -Seconds 2
+                $recheckStatus = Get-InstalledOleDbDriver
+                if ($recheckStatus.v19.Installed) {
+                    Write-Status "OLE DB Driver 19 is already installed: $($recheckStatus.v19.DisplayName) v$($recheckStatus.v19.Version)" -Type Success
+                    $installSuccess = $true
+                } else {
+                    Write-Status "Try manually uninstalling any existing OLE DB Driver 19 from Control Panel, then run this script again." -Type Warning
+                    break
+                }
             } else {
                 Write-Status "Installation failed with exit code: $($process.ExitCode)" -Type Error
                 Write-Status "Check log file: $logPath" -Type Info
@@ -471,6 +571,9 @@ if (-not $isAdmin) {
 # Show diagnostics if requested
 if ($DiagnoseVCRedist) {
     Show-VCRedistDiagnostics
+}
+if ($DiagnoseOleDb) {
+    Show-OleDbDiagnostics
 }
 
 $needsInstall = $false
@@ -550,14 +653,22 @@ Write-Host "--- Step 2: Checking Microsoft OLE DB Driver 19 for SQL Server (x64)
 Write-Status "Note: OLE DB Driver 19 requires BOTH x86 and x64 VC++ Redistributables" -Type Info
 $oleDbStatus = Get-InstalledOleDbDriver
 
-if ($oleDbStatus.Installed -and -not $Force) {
-    Write-Status "INSTALLED: $($oleDbStatus.DisplayName)" -Type Success
-    Write-Status "Version: $($oleDbStatus.Version)" -Type Info
+# Show info about version 18 if installed
+if ($oleDbStatus.v18.Installed) {
+    Write-Status "Found OLE DB Driver 18: $($oleDbStatus.v18.DisplayName) v$($oleDbStatus.v18.Version)" -Type Info
+    Write-Status "Version 18 and 19 can coexist side-by-side." -Type Info
+}
+
+if ($oleDbStatus.v19.Installed -and -not $Force) {
+    Write-Status "INSTALLED: $($oleDbStatus.v19.DisplayName)" -Type Success
+    Write-Status "Version: $($oleDbStatus.v19.Version)" -Type Info
 } else {
-    if ($Force -and $oleDbStatus.Installed) {
+    if ($Force -and $oleDbStatus.v19.Installed) {
         Write-Status "Force flag set. Will reinstall OLE DB Driver." -Type Warning
     } else {
         Write-Status "NOT INSTALLED: Microsoft OLE DB Driver 19 for SQL Server" -Type Warning
+        # Run diagnostics automatically when not found
+        Show-OleDbDiagnostics
     }
     
     if ($isAdmin) {
@@ -613,9 +724,14 @@ if ($finalVcStatus.x64.Installed) {
     Write-Host "NOT INSTALLED" -ForegroundColor Red
 }
 
-if ($finalOleDbStatus.Installed) {
+if ($finalOleDbStatus.v18.Installed) {
+    Write-Host "Microsoft OLE DB Driver 18 for SQL Server  " -NoNewline
+    Write-Host "INSTALLED ($($finalOleDbStatus.v18.Version))" -ForegroundColor Cyan
+}
+
+if ($finalOleDbStatus.v19.Installed) {
     Write-Host "Microsoft OLE DB Driver 19 for SQL Server  " -NoNewline
-    Write-Host "INSTALLED ($($finalOleDbStatus.Version))" -ForegroundColor Green
+    Write-Host "INSTALLED ($($finalOleDbStatus.v19.Version))" -ForegroundColor Green
 } else {
     Write-Host "Microsoft OLE DB Driver 19 for SQL Server  " -NoNewline
     Write-Host "NOT INSTALLED" -ForegroundColor Red
@@ -623,7 +739,7 @@ if ($finalOleDbStatus.Installed) {
 
 Write-Host ""
 
-if ($finalVcStatus.BothInstalled -and $finalOleDbStatus.Installed) {
+if ($finalVcStatus.BothInstalled -and $finalOleDbStatus.v19.Installed) {
     Write-Status "All components are installed and ready." -Type Success
     exit 0
 } else {
