@@ -292,15 +292,18 @@ function Get-InstalledOleDbDriver {
     
     $allEntries = Get-ItemProperty $regPaths -ErrorAction SilentlyContinue
     
-    # Check for OLE DB Driver 19 - expanded patterns
+    # Check for OLE DB Driver 19 - expanded patterns including version-based detection
     $oleDb19 = $allEntries | 
         Where-Object { 
             ($_.DisplayName -like "*OLE DB Driver 19*") -or
             ($_.DisplayName -like "*MSOLEDBSQL19*") -or
             ($_.DisplayName -match "MSOLEDBSQL.*19") -or
-            ($_.DisplayName -like "Microsoft OLE DB Driver 19*")
+            ($_.DisplayName -like "Microsoft OLE DB Driver 19*") -or
+            # Also match generic name with version 19.x in DisplayVersion
+            (($_.DisplayName -like "*OLE DB Driver*SQL Server*" -or $_.DisplayName -like "*MSOLEDBSQL*") -and 
+             $_.DisplayVersion -and $_.DisplayVersion -match "^19\.")
         } |
-        Sort-Object { [Version]$_.DisplayVersion } -Descending |
+        Sort-Object { try { [Version]$_.DisplayVersion } catch { [Version]"0.0" } } -Descending |
         Select-Object -First 1
     
     # Check for OLE DB Driver 18 - to detect potential conflicts
@@ -309,9 +312,12 @@ function Get-InstalledOleDbDriver {
             ($_.DisplayName -like "*OLE DB Driver 18*") -or
             ($_.DisplayName -like "*MSOLEDBSQL*" -and $_.DisplayName -notlike "*19*" -and $_.DisplayVersion -like "18.*") -or
             ($_.DisplayName -match "MSOLEDBSQL[^1]*18") -or
-            ($_.DisplayName -like "Microsoft OLE DB Driver 18*")
+            ($_.DisplayName -like "Microsoft OLE DB Driver 18*") -or
+            # Also match generic name with version 18.x in DisplayVersion
+            (($_.DisplayName -like "*OLE DB Driver*SQL Server*" -or $_.DisplayName -like "*MSOLEDBSQL*") -and 
+             $_.DisplayName -notlike "*19*" -and $_.DisplayVersion -and $_.DisplayVersion -match "^18\.")
         } |
-        Sort-Object { [Version]$_.DisplayVersion } -Descending |
+        Sort-Object { try { [Version]$_.DisplayVersion } catch { [Version]"0.0" } } -Descending |
         Select-Object -First 1
     
     $result = @{
@@ -700,9 +706,18 @@ Write-Host "============================================================" -Foreg
 Write-Host "  SUMMARY" -ForegroundColor Cyan
 Write-Host "============================================================" -ForegroundColor Cyan
 
+# Brief delay to ensure registry is updated after installation
+Start-Sleep -Seconds 3
+
 # Recheck all components
 $finalVcStatus = Get-InstalledVCRedist
 $finalOleDbStatus = Get-InstalledOleDbDriver
+
+# Debug: If v19 still not detected but we expected installation, show diagnostics
+if (-not $finalOleDbStatus.v19.Installed -and $isAdmin) {
+    Write-Status "Detection check after installation..." -Type Info
+    Show-OleDbDiagnostics
+}
 
 Write-Host ""
 Write-Host "Component                                  Status" -ForegroundColor White
